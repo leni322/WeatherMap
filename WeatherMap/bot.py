@@ -1,15 +1,13 @@
 import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, CallbackContext
-from weather import get_weather  # Импортируйте вашу функцию
+from weather import get_weather
 from config import TELEGRAM_BOT_TOKEN
 
-# Установите уровень логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# Обработчик команды /start
 async def start(update: Update, context: CallbackContext) -> None:
     logger.info('Command /start received')
     await update.message.reply_text('Привет! Введите /weather <город>, чтобы получить погоду.')

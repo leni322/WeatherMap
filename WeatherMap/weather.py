@@ -5,7 +5,7 @@ def get_weather(city_name):
     url = f"{BASE_URL}?q={city_name}&appid={API_KEY}&units=metric&lang=ru"
     try:
         response = requests.get(url)
-        response.raise_for_status()  # Вызывает исключение для статусов ошибок
+        response.raise_for_status()
         data = response.json()
         return format_weather_data(data)
     except requests.exceptions.HTTPError as errh:
