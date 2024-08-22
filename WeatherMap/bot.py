@@ -13,6 +13,8 @@ CITIES = {
     'Санкт-Петербург': 'Saint Petersburg',
     'Новосибирск': 'Novosibirsk',
     'Екатеринбург': 'Yekaterinburg',
+    'Ростов-на-Дону': 'Rostov-on-Don',
+    'Новочеркасск': 'Novocherkassk',
 }
 
 
@@ -22,6 +24,7 @@ async def start(update: Update, context: CallbackContext) -> None:
     keyboard = [
         ['Москва', 'Санкт-Петербург'],
         ['Новосибирск', 'Екатеринбург'],
+        ['Ростов-на-Дону','Новочеркасск'],
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
 
