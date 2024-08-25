@@ -7,7 +7,6 @@ from config import TELEGRAM_BOT_TOKEN
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Определяем доступные города и их координаты
 CITIES = {
     'Москва': 'Moscow',
     'Санкт-Петербург': 'Saint Petersburg',
@@ -16,7 +15,6 @@ CITIES = {
     'Ростов-на-Дону': 'Rostov-on-Don',
     'Новочеркасск': 'Novocherkassk',
 }
-
 
 async def start(update: Update, context: CallbackContext) -> None:
     logger.info('Command /start received')
@@ -33,7 +31,6 @@ async def start(update: Update, context: CallbackContext) -> None:
         reply_markup=reply_markup
     )
 
-
 async def weather(update: Update, context: CallbackContext) -> None:
     logger.info('Command /weather received')
 
@@ -49,22 +46,18 @@ async def weather(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(
             'Пожалуйста, выберите город из предложенных или укажите правильное название города после команды /weather.')
 
-
 async def error(update: Update, context: CallbackContext) -> None:
     logger.warning(f'Update {update} caused error {context.error}')
 
 
 def main():
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("weather", weather))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, weather))
-
     application.add_error_handler(error)
 
     application.run_polling()
-
 
 if __name__ == '__main__':
     main()
