@@ -15,8 +15,40 @@ def init_db():
             weather_info TEXT
         )
     ''')
+    cursor.execute('''
+        CREATE TABLE IF EXISTS subscriptions (
+        user_id INTEGER PRIMARY KEY,
+        city_name TEXT,
+        interval INTEGER DEFAULT 24 -- Интервал в часах, по умолчанию раз в сутки
+        )
+    ''')
     conn.commit()
     conn.close()
+
+def subscribe_user(user_id, city_name, interval=24):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT OR REPLACE INTO subscriptions (user_id, city_name, interval)
+        VALUES (?, ?, ?)
+    ''',(user_id,city_name,interval))
+    conn.commit()
+    conn.close()
+
+def unsubscribe_user(user_id):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM subscriptions WHERE user_id = ?', (user_id,))
+    conn.commit()
+    conn.close()
+
+def get_subscriptions():
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute('SELECT user_id, city_name, interval FROM subscriptions')
+    subscriptions = cursor.fetchall()
+    conn.close()
+    return subscriptions
 
 def save_to_db(city_name, weather_info):
     conn = sqlite3.connect(db_path)
