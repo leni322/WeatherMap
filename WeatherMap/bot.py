@@ -1,8 +1,8 @@
 import logging
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackContext, MessageHandler, filters
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import Application, CommandHandler, CallbackContext, CallbackQueryHandler
 from weather import get_weather
-from db import subscribe_user, unsubscribe_user, get_subscriptions
+from db import init_db, check_tables, subscribe_user  # Обновите импорт
 from config import TELEGRAM_BOT_TOKEN
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -17,91 +17,71 @@ CITIES = {
     'Новочеркасск': 'Novocherkassk',
 }
 
-
 async def start(update: Update, context: CallbackContext) -> None:
     logger.info('Command /start received')
-
     keyboard = [
-        ['Москва', 'Санкт-Петербург'],
-        ['Новосибирск', 'Екатеринбург'],
-        ['Ростов-на-Дону', 'Новочеркасск'],
+        [InlineKeyboardButton("Получить погоду", callback_data='get_weather')],
+        [InlineKeyboardButton("Подписаться на уведомления", callback_data='subscribe')],
     ]
-    reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
+    reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        'Привет! Выберите город для получения погоды или введите /weather <город>, чтобы получить погоду.',
+        'Привет! Выберите действие:',
         reply_markup=reply_markup
     )
 
+async def button_handler(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    await query.answer()
 
-async def weather(update: Update, context: CallbackContext) -> None:
-    logger.info('Command /weather received')
+    if query.data == 'get_weather':
+        keyboard = [
+            [InlineKeyboardButton(city, callback_data=f"weather_{city}") for city in ['Москва', 'Санкт-Петербург']],
+            [InlineKeyboardButton(city, callback_data=f"weather_{city}") for city in ['Новосибирск', 'Екатеринбург']],
+            [InlineKeyboardButton("Отмена", callback_data='cancel')],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(text="Выберите город:", reply_markup=reply_markup)
 
-    city_name = ' '.join(context.args) if context.args else update.message.text
+    elif query.data == 'subscribe':
+        keyboard = [
+            [InlineKeyboardButton(city, callback_data=f"subscribe_{city}") for city in ['Москва', 'Санкт-Петербург']],
+            [InlineKeyboardButton(city, callback_data=f"subscribe_{city}") for city in ['Новосибирск', 'Екатеринбург']],
+            [InlineKeyboardButton("Отмена", callback_data='cancel')],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(text="Выберите город для подписки:", reply_markup=reply_markup)
 
-    if city_name in CITIES.keys() or city_name in CITIES.values():
-        city_name_en = CITIES.get(city_name, city_name)
-        logger.info(f'Fetching weather for city: {city_name_en}')
-        weather_info = get_weather(city_name_en)
-        logger.info(f'Weather info: {weather_info}')
-        await update.message.reply_text(weather_info)
-    else:
-        await update.message.reply_text(
-            'Пожалуйста, выберите город из предложенных или укажите правильное название города после команды /weather.')
+    elif query.data.startswith('weather_'):
+        city_name = query.data.split('_')[1]
+        weather_info = get_weather(city_name)
+        await query.edit_message_text(f"Погода в {city_name}: \n{weather_info}")
 
+    elif query.data.startswith('subscribe_'):
+        city_name = query.data.split('_')[1]
+        # Здесь вызываем функцию для подписки пользователя
+        subscribe_user(query.from_user.id, city_name)
+        await query.edit_message_text(f"Вы подписаны на уведомления для города {city_name}!")
 
-async def subscribe(update: Update, context: CallbackContext) -> None:
-    """Подписка на уведомления по погоде с указанием интервала"""
-    user_id = update.effective_chat.id
-    if len(context.args) < 2:
-        await update.message.reply_text('Использование: /subscribe <город> <интервал в часах>')
-        return
-
-    city_name = context.args[0]
-    interval = int(context.args[1])
-
-    if city_name in CITIES.keys() or city_name in CITIES.values():
-        subscribe_user(user_id, city_name, interval)
-        await update.message.reply_text(
-            f'Вы подписаны на уведомления по погоде в городе {city_name} с интервалом {interval} часов.')
-    else:
-        await update.message.reply_text('Город не найден. Пожалуйста, выберите город из предложенных.')
-
-
-async def subscriptions(update: Update, context: CallbackContext) -> None:
-    """Получение списка текущих подписок пользователя"""
-    user_id = update.effective_chat.id
-    subscriptions = get_subscriptions()
-
-    user_subscriptions = [sub for sub in subscriptions if sub[0] == user_id]
-
-    if not user_subscriptions:
-        await update.message.reply_text('У вас нет активных подписок.')
-    else:
-        message = "Ваши подписки:\n"
-        for sub in user_subscriptions:
-            city_name = sub[1]
-            interval = sub[2]
-            message += f"{city_name}: каждые {interval} часов\n"
-        await update.message.reply_text(message)
-
+    elif query.data == 'cancel':
+        await query.edit_message_text("Операция отменена.")
 
 async def error(update: Update, context: CallbackContext) -> None:
     logger.warning(f'Update {update} caused error {context.error}')
 
-
 def main():
+    init_db()
+    tables = check_tables()
+    print("Таблицы в базе данных:", tables)
+
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("weather", weather))
-    application.add_handler(CommandHandler("subscribe", subscribe))
-    application.add_handler(CommandHandler("subscriptions", subscriptions))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, weather))
+    application.add_handler(CallbackQueryHandler(button_handler))
+
     application.add_error_handler(error)
 
     application.run_polling()
-
 
 if __name__ == '__main__':
     main()
