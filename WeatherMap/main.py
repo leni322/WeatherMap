@@ -48,3 +48,8 @@ async def subscribe(user_id: int, city_name: str, interval: int):
 async def unsubscribe(user_id: int, city_name: str):
     remove_subscription(user_id, city_name)
     return {"message": f"User {user_id} unsubscribed from weather updates for {city_name}."}
+
+@app.get("/weather/{city_name}")
+async def get_weather_info(city_name: str):
+    weather_info = get_weather(city_name)
+    return {"weather": weather_info}
