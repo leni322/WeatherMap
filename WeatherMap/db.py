@@ -4,7 +4,6 @@ from datetime import datetime
 
 db_path = os.path.join(os.getcwd(), 'weather_history.db')
 
-
 def init_db():
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -28,14 +27,13 @@ def init_db():
     if 'interval' not in columns:
         cursor.execute("ALTER TABLE subscriptions ADD COLUMN interval INTEGER DEFAULT 24;")
 
-    # Проверяем наличие колонки city_name и добавляем, если ее нет
     if 'city_name' not in columns:
         cursor.execute("ALTER TABLE subscriptions ADD COLUMN city_name TEXT;")
 
     conn.commit()
     conn.close()
 
-
+# Функция для добавления подписки
 def create_subscription(user_id, city_name, interval=1):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -44,6 +42,7 @@ def create_subscription(user_id, city_name, interval=1):
     conn.commit()
     conn.close()
 
+# Функция для отписки
 def unsubscribe_user(user_id):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -51,6 +50,7 @@ def unsubscribe_user(user_id):
     conn.commit()
     conn.close()
 
+# Получаем все подписки
 def get_subscriptions():
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -59,6 +59,7 @@ def get_subscriptions():
     conn.close()
     return subscriptions
 
+# Сохранение истории погоды
 def save_to_db(city_name, weather_info):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -68,6 +69,7 @@ def save_to_db(city_name, weather_info):
     conn.commit()
     conn.close()
 
+# Проверка существующих таблиц
 def check_tables():
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -76,7 +78,7 @@ def check_tables():
     conn.close()
     return tables
 
-
+# Подписка пользователя
 def subscribe_user(user_id, city_name, interval=24):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
