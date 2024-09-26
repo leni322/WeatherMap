@@ -2,11 +2,13 @@ import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Application, CommandHandler, CallbackContext, CallbackQueryHandler
 from weather import get_weather
-from db import init_db, check_tables, subscribe_user  # Обновите импорт
+import requests
 from config import TELEGRAM_BOT_TOKEN
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+FASTAPI_URL = "http://localhost:8000"  # Укажи, на каком порту запущен FastAPI
 
 CITIES = {
     'Москва': 'Moscow',
@@ -59,9 +61,14 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
 
     elif query.data.startswith('subscribe_'):
         city_name = query.data.split('_')[1]
-        # Здесь вызываем функцию для подписки пользователя
-        subscribe_user(query.from_user.id, city_name)
-        await query.edit_message_text(f"Вы подписаны на уведомления для города {city_name}!")
+        user_id = query.from_user.id
+
+        # Отправляем запрос в FastAPI для подписки
+        response = requests.post(f"{FASTAPI_URL}/subscribe", params={"user_id": user_id, "city_name": city_name})
+        if response.status_code == 200:
+            await query.edit_message_text(f"Вы подписаны на уведомления для города {city_name}!")
+        else:
+            await query.edit_message_text(f"Ошибка при подписке на город {city_name}.")
 
     elif query.data == 'cancel':
         await query.edit_message_text("Операция отменена.")
@@ -70,10 +77,6 @@ async def error(update: Update, context: CallbackContext) -> None:
     logger.warning(f'Update {update} caused error {context.error}')
 
 def main():
-    init_db()
-    tables = check_tables()
-    print("Таблицы в базе данных:", tables)
-
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
@@ -85,6 +88,7 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
 
 
