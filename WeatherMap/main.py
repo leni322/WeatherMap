@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import Bot
-from db import get_subscriptions, unsubscribe_user
+from db import get_subscriptions, unsubscribe_user, create_subscription
 from weather import get_weather
 from config import TELEGRAM_BOT_TOKEN
 
@@ -18,13 +18,15 @@ scheduler = AsyncIOScheduler()
 async def send_weather_notifications():
     subscriptions = get_subscriptions()  # Получаем все подписки из базы данных
 
-    for user_id, city_name, interval in subscriptions:
-        weather_info = get_weather(city_name)  # Получаем данные о погоде для подписанного города
-        await bot.send_message(chat_id=user_id, text=weather_info)  # Отправляем сообщение пользователю
+    for user_id, city_name, interval, is_active, notifications_sent in subscriptions:
+        if is_active:
+            weather_info = get_weather(city_name)
+            await bot.send_message(chat_id=user_id, text=f"Погода в {city_name}:\n{weather_info}")
+            increment_notification_count(user_id)  # Отправляем сообщение пользователю
 
 # Планировщик для отправки уведомлений о погоде раз в час (для теста)
 def schedule_weather_notifications():
-    scheduler.add_job(send_weather_notifications, 'interval', hours=1)  # Каждый час
+    scheduler.add_job(send_weather_notifications, 'interval', hours=1)  # Для теста раз в час
     scheduler.start()
 
 # Запуск планировщика при старте FastAPI
@@ -37,11 +39,14 @@ async def on_startup():
 async def root():
     return {"message": "Weather notification bot is running!"}
 
-# Маршрут для добавления подписки на уведомления о погоде
 @app.post("/subscribe")
-async def subscribe(user_id: int, city_name: str, interval: int):
-    add_subscription(user_id, city_name, interval)
-    return {"message": f"User {user_id} subscribed to weather updates for {city_name} every {interval} hours."}
+async def subscribe(user_id: int, city_name: str, interval: int = 24):
+    try:
+        # Создание подписки в базе данных
+        create_subscription(user_id, city_name, interval)
+        return {"message": f"User {user_id} subscribed to weather updates for {city_name} every {interval} hours."}
+    except Exception as e:
+        return {"message": f"Failed to subscribe: {e}"}
 
 # Маршрут для удаления подписки
 @app.delete("/unsubscribe")

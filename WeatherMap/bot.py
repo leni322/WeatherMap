@@ -1,23 +1,16 @@
 import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Application, CommandHandler, CallbackContext, CallbackQueryHandler
-from weather import get_weather
+from weather import get_weather  # Импортируем обновленную функцию из weather.py
 import requests
 from config import TELEGRAM_BOT_TOKEN
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-FASTAPI_URL = "http://localhost:8000"  # Укажи, на каком порту запущен FastAPI
+FASTAPI_URL = "http://localhost:8000"
 
-CITIES = {
-    'Москва': 'Moscow',
-    'Санкт-Петербург': 'Saint Petersburg',
-    'Новосибирск': 'Novosibirsk',
-    'Екатеринбург': 'Yekaterinburg',
-    'Ростов-на-Дону': 'Rostov-on-Don',
-    'Новочеркасск': 'Novocherkassk',
-}
+CITIES = ['Москва', 'Санкт-Петербург', 'Новосибирск', 'Екатеринбург', 'Ростов-на-Дону', 'Новочеркасск']
 
 async def start(update: Update, context: CallbackContext) -> None:
     logger.info('Command /start received')
@@ -38,8 +31,8 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
 
     if query.data == 'get_weather':
         keyboard = [
-            [InlineKeyboardButton(city, callback_data=f"weather_{city}") for city in ['Москва', 'Санкт-Петербург']],
-            [InlineKeyboardButton(city, callback_data=f"weather_{city}") for city in ['Новосибирск', 'Екатеринбург']],
+            [InlineKeyboardButton(city, callback_data=f"weather_{city}") for city in CITIES[:3]],
+            [InlineKeyboardButton(city, callback_data=f"weather_{city}") for city in CITIES[3:]],
             [InlineKeyboardButton("Отмена", callback_data='cancel')],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -47,8 +40,8 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
 
     elif query.data == 'subscribe':
         keyboard = [
-            [InlineKeyboardButton(city, callback_data=f"subscribe_{city}") for city in ['Москва', 'Санкт-Петербург']],
-            [InlineKeyboardButton(city, callback_data=f"subscribe_{city}") for city in ['Новосибирск', 'Екатеринбург']],
+            [InlineKeyboardButton(city, callback_data=f"subscribe_{city}") for city in CITIES[:3]],
+            [InlineKeyboardButton(city, callback_data=f"subscribe_{city}") for city in CITIES[3:]],
             [InlineKeyboardButton("Отмена", callback_data='cancel')],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -88,6 +81,8 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
 
 
 
