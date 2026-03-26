@@ -1,60 +1,100 @@
-from fastapi import FastAPI
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from fastapi import FastAPI, HTTPException
 from telegram import Bot
-from db import get_subscriptions, unsubscribe_user, create_subscription
-from weather import get_weather
+
 from config import TELEGRAM_BOT_TOKEN
 
-# Инициализация FastAPI
-app = FastAPI()
+try:
+    from .db import (
+        create_subscription,
+        get_subscription,
+        get_subscriptions,
+        increment_notification_count,
+        init_db,
+        unsubscribe_user,
+    )
+    from .weather import get_weather
+except ImportError:
+    from db import (
+        create_subscription,
+        get_subscription,
+        get_subscriptions,
+        increment_notification_count,
+        init_db,
+        unsubscribe_user,
+    )
+    from weather import get_weather
 
-# Инициализация Telegram Bot API
+
+app = FastAPI(title="WeatherMap API")
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
-
-# Инициализация планировщика задач
 scheduler = AsyncIOScheduler()
 
-# Функция для отправки уведомлений о погоде по подпискам пользователей
+
 async def send_weather_notifications():
-    subscriptions = get_subscriptions()  # Получаем все подписки из базы данных
-
+    subscriptions = get_subscriptions(active_only=True)
     for user_id, city_name, interval, is_active, notifications_sent in subscriptions:
-        if is_active:
-            weather_info = get_weather(city_name)
-            await bot.send_message(chat_id=user_id, text=f"Погода в {city_name}:\n{weather_info}")
-            increment_notification_count(user_id)  # Отправляем сообщение пользователю
+        weather_info = get_weather(city_name)
+        await bot.send_message(chat_id=user_id, text=f"Погода в {city_name}:\n{weather_info}")
+        increment_notification_count(user_id)
 
-# Планировщик для отправки уведомлений о погоде раз в час (для теста)
+
 def schedule_weather_notifications():
-    scheduler.add_job(send_weather_notifications, 'interval', hours=1)  # Для теста раз в час
-    scheduler.start()
+    if not scheduler.running:
+        scheduler.add_job(send_weather_notifications, "interval", hours=1, id="weather_notifications")
+        scheduler.start()
 
-# Запуск планировщика при старте FastAPI
+
 @app.on_event("startup")
 async def on_startup():
+    init_db()
     schedule_weather_notifications()
 
-# Маршрут для проверки работы приложения
+
 @app.get("/")
 async def root():
     return {"message": "Weather notification bot is running!"}
 
+
 @app.post("/subscribe")
 async def subscribe(user_id: int, city_name: str, interval: int = 24):
     try:
-        # Создание подписки в базе данных
         create_subscription(user_id, city_name, interval)
-        return {"message": f"User {user_id} subscribed to weather updates for {city_name} every {interval} hours."}
-    except Exception as e:
-        return {"message": f"Failed to subscribe: {e}"}
+        return {
+            "message": (
+                f"Подписка сохранена: пользователь {user_id} будет получать погоду "
+                f"для {city_name} каждые {interval} ч."
+            )
+        }
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=f"Failed to subscribe: {error}") from error
 
-# Маршрут для удаления подписки
+
 @app.delete("/unsubscribe")
-async def unsubscribe(user_id: int, city_name: str):
-    remove_subscription(user_id, city_name)
-    return {"message": f"User {user_id} unsubscribed from weather updates for {city_name}."}
+async def unsubscribe(user_id: int):
+    removed = unsubscribe_user(user_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"Subscription for user {user_id} not found.")
+    return {"message": f"Подписка пользователя {user_id} удалена."}
+
+
+@app.get("/subscriptions/{user_id}")
+async def subscription_details(user_id: int):
+    subscription = get_subscription(user_id)
+    if not subscription:
+        raise HTTPException(status_code=404, detail=f"Subscription for user {user_id} not found.")
+
+    response_user_id, city_name, interval, is_active, notifications_sent = subscription
+    return {
+        "user_id": response_user_id,
+        "city_name": city_name,
+        "interval": interval,
+        "is_active": bool(is_active),
+        "notifications_sent": notifications_sent,
+    }
+
 
 @app.get("/weather/{city_name}")
 async def get_weather_info(city_name: str):
     weather_info = get_weather(city_name)
-    return {"weather": weather_info}
+    return {"city_name": city_name, "weather": weather_info}
