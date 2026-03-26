@@ -20,6 +20,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+INTERVAL_OPTIONS = [3, 6, 12, 24]
+
 
 def build_main_menu() -> InlineKeyboardMarkup:
     keyboard = [
@@ -28,6 +30,29 @@ def build_main_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("Моя подписка", callback_data="show_subscription")],
         [InlineKeyboardButton("Отписаться", callback_data="unsubscribe")],
     ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_city_keyboard(prefix: str) -> InlineKeyboardMarkup:
+    keyboard = [
+        [InlineKeyboardButton(city, callback_data=f"{prefix}{city}") for city in CITIES[:3]],
+        [InlineKeyboardButton(city, callback_data=f"{prefix}{city}") for city in CITIES[3:]],
+        [InlineKeyboardButton("Назад", callback_data="menu")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def build_interval_keyboard(city_name: str) -> InlineKeyboardMarkup:
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                f"Каждые {interval} ч.",
+                callback_data=f"interval_{city_name}_{interval}",
+            )
+        ]
+        for interval in INTERVAL_OPTIONS
+    ]
+    keyboard.append([InlineKeyboardButton("Назад", callback_data="subscribe")])
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -115,7 +140,7 @@ async def show_subscription(update: Update, context: CallbackContext) -> None:
         else:
             logger.exception("Failed to load subscription for user %s", user_id)
             message = f"Не удалось получить данные о подписке. Ошибка: {error}"
-    except requests.RequestException as error:
+    except requests.RequestException:
         if get_subscription(user_id):
             subscription = api_get_subscription(user_id)
             message = format_subscription(subscription)
@@ -140,7 +165,7 @@ async def unsubscribe_command(update: Update, context: CallbackContext) -> None:
         else:
             logger.exception("Failed to unsubscribe user %s", user_id)
             message = f"Не удалось удалить подписку. Ошибка: {error}"
-    except requests.RequestException as error:
+    except requests.RequestException:
         if unsubscribe_user(user_id):
             message = f"Подписка пользователя {user_id} удалена локально."
         else:
@@ -158,24 +183,15 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
     await query.answer()
 
     if query.data == "get_weather":
-        keyboard = [
-            [InlineKeyboardButton(city, callback_data=f"weather_{city}") for city in CITIES[:3]],
-            [InlineKeyboardButton(city, callback_data=f"weather_{city}") for city in CITIES[3:]],
-            [InlineKeyboardButton("Назад", callback_data="menu")],
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(text="Выберите город:", reply_markup=reply_markup)
+        await query.edit_message_text(
+            text="Выберите город:",
+            reply_markup=build_city_keyboard("weather_"),
+        )
 
     elif query.data == "subscribe":
-        keyboard = [
-            [InlineKeyboardButton(city, callback_data=f"subscribe_{city}") for city in CITIES[:3]],
-            [InlineKeyboardButton(city, callback_data=f"subscribe_{city}") for city in CITIES[3:]],
-            [InlineKeyboardButton("Назад", callback_data="menu")],
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(
             text="Выберите город для подписки:",
-            reply_markup=reply_markup,
+            reply_markup=build_city_keyboard("subscribe_"),
         )
 
     elif query.data == "show_subscription":
@@ -197,13 +213,27 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
 
     elif query.data.startswith("subscribe_"):
         city_name = query.data.removeprefix("subscribe_")
+        context.user_data["selected_city"] = city_name
+        await query.edit_message_text(
+            f"Выбран город: {city_name}\nТеперь выберите интервал уведомлений:",
+            reply_markup=build_interval_keyboard(city_name),
+        )
+
+    elif query.data.startswith("interval_"):
+        _, city_name, interval_text = query.data.rsplit("_", 2)
+        interval = int(interval_text)
         user_id = query.from_user.id
 
         try:
-            payload = api_subscribe(user_id, city_name)
+            payload = api_subscribe(user_id, city_name, interval)
             await query.edit_message_text(payload["message"], reply_markup=build_main_menu())
         except requests.RequestException as error:
-            logger.exception("Failed to subscribe user %s to %s", user_id, city_name)
+            logger.exception(
+                "Failed to subscribe user %s to %s with interval %s",
+                user_id,
+                city_name,
+                interval,
+            )
             await query.edit_message_text(
                 f"Не удалось оформить подписку для {city_name}. Ошибка: {error}",
                 reply_markup=build_main_menu(),
