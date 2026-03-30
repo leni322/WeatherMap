@@ -1,6 +1,7 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, HTTPException
 from telegram import Bot
+from telegram.constants import ParseMode
 
 from config import TELEGRAM_BOT_TOKEN
 
@@ -13,7 +14,8 @@ try:
         init_db,
         unsubscribe_user,
     )
-    from .weather import get_weather
+    from .renderers import render_weather_html
+    from .weather import get_weather_data
 except ImportError:
     from db import (
         create_subscription,
@@ -23,7 +25,8 @@ except ImportError:
         init_db,
         unsubscribe_user,
     )
-    from weather import get_weather
+    from renderers import render_weather_html
+    from weather import get_weather_data
 
 
 app = FastAPI(title="WeatherMap API")
@@ -34,8 +37,13 @@ scheduler = AsyncIOScheduler()
 async def send_weather_notifications():
     subscriptions = get_subscriptions(active_only=True)
     for user_id, city_name, interval, is_active, notifications_sent in subscriptions:
-        weather_info = get_weather(city_name)
-        await bot.send_message(chat_id=user_id, text=f"Погода в {city_name}:\n{weather_info}")
+        weather_data = get_weather_data(city_name)
+        weather_html = render_weather_html(weather_data)
+        await bot.send_message(
+            chat_id=user_id,
+            text=weather_html,
+            parse_mode=ParseMode.HTML,
+        )
         increment_notification_count(user_id)
 
 
@@ -96,5 +104,9 @@ async def subscription_details(user_id: int):
 
 @app.get("/weather/{city_name}")
 async def get_weather_info(city_name: str):
-    weather_info = get_weather(city_name)
-    return {"city_name": city_name, "weather": weather_info}
+    try:
+        return get_weather_data(city_name)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=f"Failed to get weather: {error}") from error

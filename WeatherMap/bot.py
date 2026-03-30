@@ -1,17 +1,39 @@
+import json
 import logging
 
 import requests
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    Update,
+)
+from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackContext, CallbackQueryHandler, CommandHandler
 
 from config import FASTAPI_URL, TELEGRAM_BOT_TOKEN
 
 try:
-    from .db import create_subscription, get_subscription, init_db, unsubscribe_user
-    from .weather import CITIES, get_weather
+    from .db import (
+        create_subscription,
+        get_subscription,
+        get_weather_history,
+        init_db,
+        unsubscribe_user,
+    )
+    from .renderers import render_weather_html
+    from .weather import CITIES, get_weather_data
 except ImportError:
-    from db import create_subscription, get_subscription, init_db, unsubscribe_user
-    from weather import CITIES, get_weather
+    from db import (
+        create_subscription,
+        get_subscription,
+        get_weather_history,
+        init_db,
+        unsubscribe_user,
+    )
+    from renderers import render_weather_html
+    from weather import CITIES, get_weather_data
 
 
 logging.basicConfig(
@@ -28,9 +50,23 @@ def build_main_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("Получить погоду", callback_data="get_weather")],
         [InlineKeyboardButton("Подписаться на уведомления", callback_data="subscribe")],
         [InlineKeyboardButton("Моя подписка", callback_data="show_subscription")],
+        [InlineKeyboardButton("История", callback_data="history")],
         [InlineKeyboardButton("Отписаться", callback_data="unsubscribe")],
     ]
     return InlineKeyboardMarkup(keyboard)
+
+
+def build_persistent_keyboard() -> ReplyKeyboardMarkup:
+    keyboard = [
+        [KeyboardButton("/menu"), KeyboardButton("/history")],
+        [KeyboardButton("/subscriptions"), KeyboardButton("/unsubscribe")],
+    ]
+    return ReplyKeyboardMarkup(
+        keyboard=keyboard,
+        resize_keyboard=True,
+        one_time_keyboard=False,
+        is_persistent=True,
+    )
 
 
 def build_city_keyboard(prefix: str) -> InlineKeyboardMarkup:
@@ -121,12 +157,60 @@ def format_subscription(subscription: dict) -> str:
     )
 
 
+def format_history(limit: int = 5) -> str:
+    history_rows = get_weather_history(limit=limit)
+    if not history_rows:
+        return "История погоды пока пуста."
+
+    lines = ["Последние записи:"]
+    for timestamp, city_name, weather_info in history_rows:
+        try:
+            payload = json.loads(weather_info)
+            summary = payload.get("summary", "Нет данных")
+            temperature = payload.get("current", {}).get("temperature_c")
+            first_line = f"{summary}, {temperature}°C" if temperature else summary
+        except (json.JSONDecodeError, TypeError):
+            first_line = weather_info.splitlines()[0] if weather_info else "Нет данных"
+        lines.append(f"{timestamp} | {city_name} | {first_line}")
+    return "\n".join(lines)
+
+
+async def send_main_menu(update: Update, text: str) -> None:
+    if update.callback_query:
+        await update.callback_query.message.reply_text(
+            text,
+            reply_markup=build_persistent_keyboard(),
+        )
+        await update.callback_query.edit_message_text(
+            "Главное меню:",
+            reply_markup=build_main_menu(),
+        )
+    else:
+        await update.message.reply_text(
+            text,
+            reply_markup=build_persistent_keyboard(),
+        )
+        await update.message.reply_text(
+            "Главное меню:",
+            reply_markup=build_main_menu(),
+        )
+
+
 async def start(update: Update, context: CallbackContext) -> None:
     logger.info("Command /start received")
-    await update.message.reply_text(
-        "Привет! Выберите действие:",
-        reply_markup=build_main_menu(),
-    )
+    await send_main_menu(update, "Быстрое меню закреплено внизу чата.")
+
+
+async def menu_command(update: Update, context: CallbackContext) -> None:
+    await send_main_menu(update, "Быстрое меню обновлено.")
+
+
+async def history_command(update: Update, context: CallbackContext) -> None:
+    message = format_history(limit=5)
+    if update.callback_query:
+        await update.callback_query.edit_message_text(message, reply_markup=build_main_menu())
+    else:
+        await update.message.reply_text(message, reply_markup=build_persistent_keyboard())
 
 
 async def show_subscription(update: Update, context: CallbackContext) -> None:
@@ -151,7 +235,7 @@ async def show_subscription(update: Update, context: CallbackContext) -> None:
     if update.callback_query:
         await update.callback_query.edit_message_text(message, reply_markup=build_main_menu())
     else:
-        await update.message.reply_text(message, reply_markup=build_main_menu())
+        await update.message.reply_text(message, reply_markup=build_persistent_keyboard())
 
 
 async def unsubscribe_command(update: Update, context: CallbackContext) -> None:
@@ -175,7 +259,7 @@ async def unsubscribe_command(update: Update, context: CallbackContext) -> None:
     if update.callback_query:
         await update.callback_query.edit_message_text(message, reply_markup=build_main_menu())
     else:
-        await update.message.reply_text(message, reply_markup=build_main_menu())
+        await update.message.reply_text(message, reply_markup=build_persistent_keyboard())
 
 
 async def button_handler(update: Update, context: CallbackContext) -> None:
@@ -187,38 +271,34 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
             text="Выберите город:",
             reply_markup=build_city_keyboard("weather_"),
         )
-
     elif query.data == "subscribe":
         await query.edit_message_text(
             text="Выберите город для подписки:",
             reply_markup=build_city_keyboard("subscribe_"),
         )
-
     elif query.data == "show_subscription":
         await show_subscription(update, context)
-
+    elif query.data == "history":
+        await history_command(update, context)
     elif query.data == "unsubscribe":
         await unsubscribe_command(update, context)
-
     elif query.data == "menu":
         await query.edit_message_text("Главное меню:", reply_markup=build_main_menu())
-
     elif query.data.startswith("weather_"):
         city_name = query.data.removeprefix("weather_")
-        weather_info = get_weather(city_name)
+        weather_data = get_weather_data(city_name)
+        weather_html = render_weather_html(weather_data)
         await query.edit_message_text(
-            f"Погода в {city_name}:\n{weather_info}",
+            weather_html,
             reply_markup=build_main_menu(),
+            parse_mode=ParseMode.HTML,
         )
-
     elif query.data.startswith("subscribe_"):
         city_name = query.data.removeprefix("subscribe_")
-        context.user_data["selected_city"] = city_name
         await query.edit_message_text(
             f"Выбран город: {city_name}\nТеперь выберите интервал уведомлений:",
             reply_markup=build_interval_keyboard(city_name),
         )
-
     elif query.data.startswith("interval_"):
         _, city_name, interval_text = query.data.rsplit("_", 2)
         interval = int(interval_text)
@@ -248,6 +328,8 @@ def main():
     init_db()
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("menu", menu_command))
+    application.add_handler(CommandHandler("history", history_command))
     application.add_handler(CommandHandler("subscriptions", show_subscription))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
     application.add_handler(CallbackQueryHandler(button_handler))

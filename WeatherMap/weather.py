@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -112,9 +113,9 @@ def build_recommendations(
     return recommendations
 
 
-def get_weather(city_name: str) -> str:
+def get_weather_data(city_name: str) -> dict:
     if city_name not in CITIES_COORDINATES:
-        return "Координаты для этого города не найдены."
+        raise ValueError("Координаты для этого города не найдены.")
 
     latitude, longitude = CITIES_COORDINATES[city_name]
     cache_session = requests_cache.CachedSession(
@@ -149,34 +150,55 @@ def get_weather(city_name: str) -> str:
         "timezone": WEATHER_TIMEZONE,
     }
 
-    try:
-        response = openmeteo.weather_api(
-            "https://api.open-meteo.com/v1/forecast", params=params
-        )[0]
-        current = response.Current()
-        daily = response.Daily()
+    response = openmeteo.weather_api(
+        "https://api.open-meteo.com/v1/forecast", params=params
+    )[0]
+    current = response.Current()
+    daily = response.Daily()
 
-        temperature = current.Variables(0).Value()
-        humidity = current.Variables(1).Value()
-        feels_like = current.Variables(2).Value()
-        precipitation = current.Variables(3).Value()
-        rain = current.Variables(4).Value()
-        weather_code = current.Variables(5).Value()
-        cloud_cover = current.Variables(6).Value()
-        pressure = current.Variables(7).Value()
-        wind_speed = current.Variables(8).Value()
-        wind_direction = current.Variables(9).Value()
-        wind_gusts = current.Variables(10).Value()
+    temperature = current.Variables(0).Value()
+    humidity = current.Variables(1).Value()
+    feels_like = current.Variables(2).Value()
+    precipitation = current.Variables(3).Value()
+    rain = current.Variables(4).Value()
+    weather_code = current.Variables(5).Value()
+    cloud_cover = current.Variables(6).Value()
+    pressure = current.Variables(7).Value()
+    wind_speed = current.Variables(8).Value()
+    wind_direction = current.Variables(9).Value()
+    wind_gusts = current.Variables(10).Value()
 
-        max_temp = daily.Variables(0).ValuesAsNumpy()[0]
-        min_temp = daily.Variables(1).ValuesAsNumpy()[0]
-        precipitation_probability_max = daily.Variables(2).ValuesAsNumpy()[0]
-        sunrise = daily.Variables(3).ValuesInt64AsNumpy()[0]
-        sunset = daily.Variables(4).ValuesInt64AsNumpy()[0]
+    max_temp = daily.Variables(0).ValuesAsNumpy()[0]
+    min_temp = daily.Variables(1).ValuesAsNumpy()[0]
+    precipitation_probability_max = daily.Variables(2).ValuesAsNumpy()[0]
+    sunrise = daily.Variables(3).ValuesInt64AsNumpy()[0]
+    sunset = daily.Variables(4).ValuesInt64AsNumpy()[0]
 
-        description = get_weather_description(weather_code)
-        wind_direction_text = wind_direction_to_text(wind_direction)
-        recommendations = build_recommendations(
+    weather_data = {
+        "city_name": city_name,
+        "summary": get_weather_description(weather_code),
+        "current": {
+            "temperature_c": format_number(temperature),
+            "feels_like_c": format_number(feels_like),
+            "humidity_percent": format_number(humidity, 0),
+            "pressure_hpa": format_number(pressure, 0),
+            "cloud_cover_percent": format_number(cloud_cover, 0),
+            "wind_speed_ms": format_number(wind_speed),
+            "wind_direction": wind_direction_to_text(wind_direction),
+            "wind_gusts_ms": format_number(wind_gusts),
+            "precipitation_mm": format_number(precipitation),
+            "rain_mm": format_number(rain),
+        },
+        "daily": {
+            "temp_min_c": format_number(min_temp),
+            "temp_max_c": format_number(max_temp),
+            "precipitation_probability_percent": format_number(
+                precipitation_probability_max, 0
+            ),
+            "sunrise": format_unix_time(sunrise),
+            "sunset": format_unix_time(sunset),
+        },
+        "recommendations": build_recommendations(
             temperature=temperature,
             feels_like=feels_like,
             wind_speed=wind_speed,
@@ -185,29 +207,19 @@ def get_weather(city_name: str) -> str:
             rain=rain,
             min_temp=min_temp,
             max_temp=max_temp,
-        )
-        recommendations_block = "\n".join(
-            f"- {recommendation}" for recommendation in recommendations
-        )
+        ),
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    save_to_db(city_name, json.dumps(weather_data, ensure_ascii=False))
+    return weather_data
 
-        weather_message = (
-            f"Сейчас: {description}\n"
-            f"Температура: {format_number(temperature)}°C\n"
-            f"Ощущается как: {format_number(feels_like)}°C\n"
-            f"Температура за день: от {format_number(min_temp)}°C до {format_number(max_temp)}°C\n"
-            f"Влажность: {format_number(humidity, 0)}%\n"
-            f"Давление: {format_number(pressure, 0)} гПа\n"
-            f"Облачность: {format_number(cloud_cover, 0)}%\n"
-            f"Ветер: {format_number(wind_speed)} м/с, {wind_direction_text}\n"
-            f"Порывы ветра: до {format_number(wind_gusts)} м/с\n"
-            f"Осадки сейчас: {format_number(precipitation)} мм\n"
-            f"Дождь сейчас: {format_number(rain)} мм\n"
-            f"Вероятность осадков сегодня: {format_number(precipitation_probability_max, 0)}%\n"
-            f"Восход: {format_unix_time(sunrise)}\n"
-            f"Закат: {format_unix_time(sunset)}\n"
-            f"\nРекомендации:\n{recommendations_block}"
-        )
-        save_to_db(city_name, weather_message)
-        return weather_message
+
+def get_weather(city_name: str) -> str:
+    try:
+        weather_data = get_weather_data(city_name)
+        return json.dumps(weather_data, ensure_ascii=False)
     except Exception as error:
-        return f"Ошибка при получении данных: {error}"
+        return json.dumps(
+            {"city_name": city_name, "error": f"Ошибка при получении данных: {error}"},
+            ensure_ascii=False,
+        )
