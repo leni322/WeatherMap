@@ -10,9 +10,17 @@ from telegram import (
     Update,
 )
 from telegram.constants import ParseMode
+from telegram.error import NetworkError, TimedOut
 from telegram.ext import Application, CallbackContext, CallbackQueryHandler, CommandHandler
 
-from config import FASTAPI_URL, TELEGRAM_BOT_TOKEN
+from config import (
+    FASTAPI_URL,
+    TELEGRAM_BOT_TOKEN,
+    TELEGRAM_CONNECT_TIMEOUT,
+    TELEGRAM_POOL_TIMEOUT,
+    TELEGRAM_READ_TIMEOUT,
+    TELEGRAM_WRITE_TIMEOUT,
+)
 
 try:
     from .db import (
@@ -23,6 +31,7 @@ try:
         unsubscribe_user,
     )
     from .renderers import render_weather_html
+    from . import ui_text
     from .weather import CITIES, get_weather_data
 except ImportError:
     from db import (
@@ -33,6 +42,7 @@ except ImportError:
         unsubscribe_user,
     )
     from renderers import render_weather_html
+    import ui_text
     from weather import CITIES, get_weather_data
 
 
@@ -47,11 +57,11 @@ INTERVAL_OPTIONS = [3, 6, 12, 24]
 
 def build_main_menu() -> InlineKeyboardMarkup:
     keyboard = [
-        [InlineKeyboardButton("Получить погоду", callback_data="get_weather")],
-        [InlineKeyboardButton("Подписаться на уведомления", callback_data="subscribe")],
-        [InlineKeyboardButton("Моя подписка", callback_data="show_subscription")],
-        [InlineKeyboardButton("История", callback_data="history")],
-        [InlineKeyboardButton("Отписаться", callback_data="unsubscribe")],
+        [InlineKeyboardButton(ui_text.BUTTON_GET_WEATHER, callback_data="get_weather")],
+        [InlineKeyboardButton(ui_text.BUTTON_SUBSCRIBE, callback_data="subscribe")],
+        [InlineKeyboardButton(ui_text.BUTTON_SHOW_SUBSCRIPTION, callback_data="show_subscription")],
+        [InlineKeyboardButton(ui_text.BUTTON_HISTORY, callback_data="history")],
+        [InlineKeyboardButton(ui_text.BUTTON_UNSUBSCRIBE, callback_data="unsubscribe")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -73,7 +83,7 @@ def build_city_keyboard(prefix: str) -> InlineKeyboardMarkup:
     keyboard = [
         [InlineKeyboardButton(city, callback_data=f"{prefix}{city}") for city in CITIES[:3]],
         [InlineKeyboardButton(city, callback_data=f"{prefix}{city}") for city in CITIES[3:]],
-        [InlineKeyboardButton("Назад", callback_data="menu")],
+        [InlineKeyboardButton(ui_text.BUTTON_BACK, callback_data="menu")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -82,13 +92,13 @@ def build_interval_keyboard(city_name: str) -> InlineKeyboardMarkup:
     keyboard = [
         [
             InlineKeyboardButton(
-                f"Каждые {interval} ч.",
+                ui_text.PROMPT_INTERVAL_BUTTON.format(interval=interval),
                 callback_data=f"interval_{city_name}_{interval}",
             )
         ]
         for interval in INTERVAL_OPTIONS
     ]
-    keyboard.append([InlineKeyboardButton("Назад", callback_data="subscribe")])
+    keyboard.append([InlineKeyboardButton(ui_text.BUTTON_BACK, callback_data="subscribe")])
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -124,8 +134,11 @@ def api_subscribe(user_id: int, city_name: str, interval: int = 24) -> dict:
         create_subscription(user_id, city_name, interval)
         return {
             "message": (
-                f"Подписка сохранена локально: пользователь {user_id} будет получать погоду "
-                f"для {city_name} каждые {interval} ч."
+                ui_text.SUBSCRIBE_LOCAL.format(
+                    user_id=user_id,
+                    city_name=city_name,
+                    interval=interval,
+                )
             )
         }
 
@@ -143,34 +156,37 @@ def api_unsubscribe(user_id: int) -> dict:
         removed = unsubscribe_user(user_id)
         if not removed:
             raise
-        return {"message": f"Подписка пользователя {user_id} удалена локально."}
+        return {"message": ui_text.UNSUBSCRIBE_LOCAL.format(user_id=user_id)}
 
 
 def format_subscription(subscription: dict) -> str:
-    status = "активна" if subscription["is_active"] else "отключена"
-    return (
-        "Текущая подписка:\n"
-        f"Город: {subscription['city_name']}\n"
-        f"Интервал: каждые {subscription['interval']} ч.\n"
-        f"Статус: {status}\n"
-        f"Уведомлений отправлено: {subscription['notifications_sent']}"
+    status = (
+        ui_text.SUBSCRIPTION_STATUS_ACTIVE
+        if subscription["is_active"]
+        else ui_text.SUBSCRIPTION_STATUS_INACTIVE
+    )
+    return ui_text.SUBSCRIPTION_TEMPLATE.format(
+        city_name=subscription["city_name"],
+        interval=subscription["interval"],
+        status=status,
+        notifications_sent=subscription["notifications_sent"],
     )
 
 
 def format_history(limit: int = 5) -> str:
     history_rows = get_weather_history(limit=limit)
     if not history_rows:
-        return "История погоды пока пуста."
+        return ui_text.HISTORY_EMPTY
 
-    lines = ["Последние записи:"]
+    lines = [ui_text.HISTORY_TITLE]
     for timestamp, city_name, weather_info in history_rows:
         try:
             payload = json.loads(weather_info)
-            summary = payload.get("summary", "Нет данных")
+            summary = payload.get("summary", ui_text.HISTORY_NO_DATA)
             temperature = payload.get("current", {}).get("temperature_c")
             first_line = f"{summary}, {temperature}°C" if temperature else summary
         except (json.JSONDecodeError, TypeError):
-            first_line = weather_info.splitlines()[0] if weather_info else "Нет данных"
+            first_line = weather_info.splitlines()[0] if weather_info else ui_text.HISTORY_NO_DATA
         lines.append(f"{timestamp} | {city_name} | {first_line}")
     return "\n".join(lines)
 
@@ -182,7 +198,7 @@ async def send_main_menu(update: Update, text: str) -> None:
             reply_markup=build_persistent_keyboard(),
         )
         await update.callback_query.edit_message_text(
-            "Главное меню:",
+            ui_text.MAIN_MENU_TITLE,
             reply_markup=build_main_menu(),
         )
     else:
@@ -191,18 +207,18 @@ async def send_main_menu(update: Update, text: str) -> None:
             reply_markup=build_persistent_keyboard(),
         )
         await update.message.reply_text(
-            "Главное меню:",
+            ui_text.MAIN_MENU_TITLE,
             reply_markup=build_main_menu(),
         )
 
 
 async def start(update: Update, context: CallbackContext) -> None:
     logger.info("Command /start received")
-    await send_main_menu(update, "Быстрое меню закреплено внизу чата.")
+    await send_main_menu(update, ui_text.MAIN_MENU_PINNED)
 
 
 async def menu_command(update: Update, context: CallbackContext) -> None:
-    await send_main_menu(update, "Быстрое меню обновлено.")
+    await send_main_menu(update, ui_text.MAIN_MENU_REFRESHED)
 
 
 async def history_command(update: Update, context: CallbackContext) -> None:
@@ -220,17 +236,17 @@ async def show_subscription(update: Update, context: CallbackContext) -> None:
         message = format_subscription(subscription)
     except requests.HTTPError as error:
         if error.response is not None and error.response.status_code == 404:
-            message = "У вас пока нет активной подписки."
+            message = ui_text.SUBSCRIPTION_MISSING
         else:
             logger.exception("Failed to load subscription for user %s", user_id)
-            message = f"Не удалось получить данные о подписке. Ошибка: {error}"
+            message = ui_text.SUBSCRIPTION_LOAD_ERROR.format(error=error)
     except requests.RequestException:
         if get_subscription(user_id):
             subscription = api_get_subscription(user_id)
             message = format_subscription(subscription)
         else:
             logger.exception("Failed to reach API for subscription details")
-            message = "У вас пока нет активной подписки."
+            message = ui_text.SUBSCRIPTION_MISSING
 
     if update.callback_query:
         await update.callback_query.edit_message_text(message, reply_markup=build_main_menu())
@@ -245,16 +261,16 @@ async def unsubscribe_command(update: Update, context: CallbackContext) -> None:
         message = payload["message"]
     except requests.HTTPError as error:
         if error.response is not None and error.response.status_code == 404:
-            message = "У вас нет подписки, которую можно удалить."
+            message = ui_text.UNSUBSCRIBE_MISSING
         else:
             logger.exception("Failed to unsubscribe user %s", user_id)
-            message = f"Не удалось удалить подписку. Ошибка: {error}"
+            message = ui_text.UNSUBSCRIBE_ERROR.format(error=error)
     except requests.RequestException:
         if unsubscribe_user(user_id):
-            message = f"Подписка пользователя {user_id} удалена локально."
+            message = ui_text.UNSUBSCRIBE_LOCAL.format(user_id=user_id)
         else:
             logger.exception("Failed to reach API for unsubscribe")
-            message = "У вас нет подписки, которую можно удалить."
+            message = ui_text.UNSUBSCRIBE_MISSING
 
     if update.callback_query:
         await update.callback_query.edit_message_text(message, reply_markup=build_main_menu())
@@ -268,12 +284,12 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
 
     if query.data == "get_weather":
         await query.edit_message_text(
-            text="Выберите город:",
+            text=ui_text.PROMPT_SELECT_CITY,
             reply_markup=build_city_keyboard("weather_"),
         )
     elif query.data == "subscribe":
         await query.edit_message_text(
-            text="Выберите город для подписки:",
+            text=ui_text.PROMPT_SELECT_SUBSCRIBE_CITY,
             reply_markup=build_city_keyboard("subscribe_"),
         )
     elif query.data == "show_subscription":
@@ -283,7 +299,7 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
     elif query.data == "unsubscribe":
         await unsubscribe_command(update, context)
     elif query.data == "menu":
-        await query.edit_message_text("Главное меню:", reply_markup=build_main_menu())
+        await query.edit_message_text(ui_text.MAIN_MENU_TITLE, reply_markup=build_main_menu())
     elif query.data.startswith("weather_"):
         city_name = query.data.removeprefix("weather_")
         weather_data = get_weather_data(city_name)
@@ -296,7 +312,7 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
     elif query.data.startswith("subscribe_"):
         city_name = query.data.removeprefix("subscribe_")
         await query.edit_message_text(
-            f"Выбран город: {city_name}\nТеперь выберите интервал уведомлений:",
+            ui_text.PROMPT_INTERVAL.format(city_name=city_name),
             reply_markup=build_interval_keyboard(city_name),
         )
     elif query.data.startswith("interval_"):
@@ -315,7 +331,7 @@ async def button_handler(update: Update, context: CallbackContext) -> None:
                 interval,
             )
             await query.edit_message_text(
-                f"Не удалось оформить подписку для {city_name}. Ошибка: {error}",
+                ui_text.SUBSCRIBE_ERROR.format(city_name=city_name, error=error),
                 reply_markup=build_main_menu(),
             )
 
@@ -326,7 +342,19 @@ async def error(update: Update, context: CallbackContext) -> None:
 
 def main():
     init_db()
-    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    application = (
+        Application.builder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .connect_timeout(TELEGRAM_CONNECT_TIMEOUT)
+        .read_timeout(TELEGRAM_READ_TIMEOUT)
+        .write_timeout(TELEGRAM_WRITE_TIMEOUT)
+        .pool_timeout(TELEGRAM_POOL_TIMEOUT)
+        .get_updates_connect_timeout(TELEGRAM_CONNECT_TIMEOUT)
+        .get_updates_read_timeout(TELEGRAM_READ_TIMEOUT)
+        .get_updates_write_timeout(TELEGRAM_WRITE_TIMEOUT)
+        .get_updates_pool_timeout(TELEGRAM_POOL_TIMEOUT)
+        .build()
+    )
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("menu", menu_command))
     application.add_handler(CommandHandler("history", history_command))
@@ -334,7 +362,24 @@ def main():
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_error_handler(error)
-    application.run_polling()
+    try:
+        application.run_polling(
+            connect_timeout=TELEGRAM_CONNECT_TIMEOUT,
+            read_timeout=TELEGRAM_READ_TIMEOUT,
+            write_timeout=TELEGRAM_WRITE_TIMEOUT,
+            pool_timeout=TELEGRAM_POOL_TIMEOUT,
+        )
+    except TimedOut:
+        logger.error(
+            "Telegram API timed out during startup. Check internet access to api.telegram.org "
+            "or increase TELEGRAM_*_TIMEOUT values in .env."
+        )
+    except NetworkError as network_error:
+        logger.error(
+            "Telegram network error during startup: %s. Check internet access, proxy/VPN, "
+            "firewall, or Telegram API availability.",
+            network_error,
+        )
 
 
 if __name__ == "__main__":
