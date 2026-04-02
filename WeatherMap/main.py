@@ -1,32 +1,37 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from telegram import Bot
 from telegram.constants import ParseMode
 
 from config import TELEGRAM_BOT_TOKEN
 
 try:
+    from .dashboard_renderer import render_dashboard
     from .db import (
         create_subscription,
         get_subscription,
         get_subscriptions,
+        get_weather_history,
         increment_notification_count,
         init_db,
         unsubscribe_user,
     )
     from .renderers import render_weather_html
-    from .weather import get_weather_data
+    from .weather import CITIES, get_weather_data
 except ImportError:
+    from dashboard_renderer import render_dashboard
     from db import (
         create_subscription,
         get_subscription,
         get_subscriptions,
+        get_weather_history,
         increment_notification_count,
         init_db,
         unsubscribe_user,
     )
     from renderers import render_weather_html
-    from weather import get_weather_data
+    from weather import CITIES, get_weather_data
 
 
 app = FastAPI(title="WeatherMap API")
@@ -62,6 +67,19 @@ async def on_startup():
 @app.get("/")
 async def root():
     return {"message": "Weather notification bot is running!"}
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(city: str = CITIES[0]):
+    try:
+        weather_data = get_weather_data(city)
+        history_rows = get_weather_history(limit=6, city_name=city)
+        html = render_dashboard(weather_data, history_rows, CITIES)
+        return HTMLResponse(content=html)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=f"Failed to render dashboard: {error}") from error
 
 
 @app.post("/subscribe")

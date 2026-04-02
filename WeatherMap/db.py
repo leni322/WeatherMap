@@ -142,18 +142,25 @@ def save_to_db(city_name: str, weather_info: str):
         conn.commit()
 
 
-def get_weather_history(limit: int = 20):
+def get_weather_history(limit: int = 20, city_name: str | None = None):
+    query = """
+        SELECT timestamp, city_name, weather_info
+        FROM history
+    """
+    params = []
+    if city_name:
+        query += " WHERE city_name = ?"
+        params.append(city_name)
+
+    query += """
+        ORDER BY timestamp DESC
+        LIMIT ?
+    """
+    params.append(limit)
+
     with closing(get_connection()) as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT timestamp, city_name, weather_info
-            FROM history
-            ORDER BY timestamp DESC
-            LIMIT ?
-            """,
-            (limit,),
-        )
+        cursor.execute(query, tuple(params))
         return cursor.fetchall()
 
 
@@ -171,4 +178,3 @@ def unsubscribe_user(user_id: int):
         deleted_rows = cursor.rowcount
         conn.commit()
         return deleted_rows > 0
-
